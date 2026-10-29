@@ -3,6 +3,7 @@ import json
 import asyncio
 import urllib.request
 import urllib.error
+from flask import Flask
 
 from telegram import Update
 from telegram.ext import (
@@ -18,9 +19,7 @@ from telegram.ext import (
 # ==========================================
 
 TELEGRAM_TOKEN = "8790403491:AAH1qULj2YsTiZVFjrGLbRady7ftQ0Axg6c"
-
 OPENROUTER_API_KEY = "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"
-
 ADMIN_CHAT_ID = 5023396190
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -28,6 +27,16 @@ MODEL = "google/gemini-2.5-flash"
 
 MAX_HISTORY_MESSAGES = 20
 REQUEST_TIMEOUT = 60
+
+# ==========================================
+# FLASK APP (Render Web Service အတွက်)
+# ==========================================
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is alive and running 24/7!"
 
 # ==========================================
 # BASE SYSTEM PROMPT & ROLE PROFILES
@@ -63,40 +72,25 @@ CURRENT DYNAMIC: [Submissive AI / Obedient Companion]
 """
 }
 
-# Default role is femdom
 user_roles = {}
 
 def get_system_prompt(user_id: int) -> str:
     role = user_roles.get(user_id, "femdom")
     return BASE_SYSTEM_PROMPT + "\n" + ROLE_PROFILES.get(role, ROLE_PROFILES["femdom"])
 
-# ==========================================
-# CONVERSATION MEMORY
-# ==========================================
-
 chat_histories = {}
 
 def get_history(user_id):
     return chat_histories.setdefault(user_id, [])
-
-# ==========================================
-# OPENROUTER AI
-# ==========================================
 
 def get_ai_response(user_id: int, user_message: str) -> str:
     history = get_history(user_id)
     system_prompt = get_system_prompt(user_id)
 
     messages = [
-        {
-            "role": "system",
-            "content": system_prompt,
-        },
+        {"role": "system", "content": system_prompt},
         *history[-MAX_HISTORY_MESSAGES:],
-        {
-            "role": "user",
-            "content": user_message,
-        },
+        {"role": "user", "content": user_message},
     ]
 
     data = {
@@ -121,69 +115,30 @@ def get_ai_response(user_id: int, user_message: str) -> str:
     )
 
     try:
-        with urllib.request.urlopen(
-            request,
-            timeout=REQUEST_TIMEOUT,
-        ) as response:
-            result = json.loads(
-                response.read().decode("utf-8")
-            )
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT) as response:
+            result = json.loads(response.read().decode("utf-8"))
 
         ai_reply = result["choices"][0]["message"]["content"]
-
         if not isinstance(ai_reply, str) or not ai_reply.strip():
-            print("OpenRouter returned an empty response.")
             return "အခု အဖြေမရသေးဘူး။ ထပ်မေးကြည့်ပါ။"
 
         history.extend([
-            {
-                "role": "user",
-                "content": user_message,
-            },
-            {
-                "role": "assistant",
-                "content": ai_reply,
-            },
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": ai_reply},
         ])
-
         chat_histories[user_id] = history[-MAX_HISTORY_MESSAGES:]
         return ai_reply
-
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8", errors="replace")
-        print("\n===== OPENROUTER HTTP ERROR =====")
-        print("Status:", e.code)
-        print("Response:", error_body)
-        print("================================\n")
-        return "အခု AI server နဲ့ ချိတ်ဆက်ရာမှာ ပြဿနာဖြစ်နေတယ်။ ခဏနေမှ ထပ်စမ်းကြည့်ပါ။"
-
-    except urllib.error.URLError as e:
-        print("Network Error:", repr(e))
-        return "Internet connection သို့မဟုတ် AI server ကို ချိတ်ဆက်လို့မရသေးဘူး။"
-
     except Exception as e:
         print("OpenRouter Error:", repr(e))
         return "အဖြေထုတ်ရာမှာ အမှားတစ်ခု ဖြစ်သွားတယ်။"
 
-# ==========================================
-# SEND LONG TELEGRAM MESSAGES
-# ==========================================
-
 async def send_long_message(bot, chat_id, text):
     for start in range(0, len(text), 4000):
-        await bot.send_message(
-            chat_id=chat_id,
-            text=text[start:start + 4000],
-        )
-
-# ==========================================
-# /START
-# ==========================================
+        await bot.send_message(chat_id=chat_id, text=text[start:start + 4000])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
-
     await update.message.reply_text(
         "မင်းရောက်လာပြီပေါ့။ 😉\n\n"
         "ငါတို့ရဲ့ ဆက်ဆံရေးပုံစံ (Dynamic) ကို ရွေးချယ်နိုင်ပါတယ်။\n"
@@ -191,10 +146,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👉 /reset — စကားဝိုင်းအသစ်စရန်\n\n"
         "မေးချင်တာရှိရင် တိုက်ရိုက်ပြောလို့ရပြီ။"
     )
-
-# ==========================================
-# /ROLE SELECTION
-# ==========================================
 
 async def set_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_user:
@@ -216,7 +167,7 @@ async def set_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice = args[0].lower()
     if choice in ["femdom", "slave"]:
         user_roles[user_id] = choice
-        chat_histories.pop(user_id, None) # Clear memory when switching roles
+        chat_histories.pop(user_id, None)
         
         if choice == "femdom":
             msg = "ကောင်းပြီ။ ဒီကနေစပြီး ငါက မင်းရဲ့ Mistress ဖြစ်ပြီ။ အမိန့်နာခံဖို့ပြင်ထား။ 😉"
@@ -227,24 +178,13 @@ async def set_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("မှားယွင်းနေပါတယ်။ `/role femdom` သို့မဟုတ် `/role slave` လို့ ရိုက်ပေးပါ။")
 
-# ==========================================
-# /RESET CONVERSATION
-# ==========================================
-
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user or not update.message:
         return
 
     user_id = update.effective_user.id
     chat_histories.pop(user_id, None)
-
-    await update.message.reply_text(
-        "ကောင်းပြီ။ စကားဝိုင်းအသစ်ကနေ ပြန်စကြမယ်။ 😉"
-    )
-
-# ==========================================
-# USER MESSAGE HANDLER
-# ==========================================
+    await update.message.reply_text("ကောင်းပြီ။ စကားဝိုင်းအသစ်ကနေ ပြန်စကြမယ်။ 😉")
 
 async def ai_chat_and_forward(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.effective_user:
@@ -252,11 +192,9 @@ async def ai_chat_and_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     user = update.effective_user
     user_message = update.message.text
-
     if not user_message:
         return
 
-    # 1. FORWARD USER MESSAGE TO ADMIN
     admin_user_text = (
         "📩 USER MESSAGE\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -269,22 +207,15 @@ async def ai_chat_and_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         await send_long_message(context.bot, ADMIN_CHAT_ID, admin_user_text)
     except Exception as e:
-        print("Admin user notification error:", repr(e))
+        print("Admin error:", repr(e))
 
-    # 2. GET AI RESPONSE
-    ai_reply = await asyncio.to_thread(
-        get_ai_response,
-        user.id,
-        user_message,
-    )
+    ai_reply = await asyncio.to_thread(get_ai_response, user.id, user_message)
 
-    # 3. SEND AI RESPONSE TO USER
     try:
         await send_long_message(context.bot, update.effective_chat.id, ai_reply)
     except Exception as e:
         print("User reply error:", repr(e))
 
-    # 4. SEND AI RESPONSE TO ADMIN
     admin_ai_text = (
         "🤖 AI BOT REPLY\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -298,34 +229,27 @@ async def ai_chat_and_forward(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         await send_long_message(context.bot, ADMIN_CHAT_ID, admin_ai_text)
     except Exception as e:
-        print("Admin AI notification error:", repr(e))
+        print("Admin AI error:", repr(e))
 
-# ==========================================
-# MAIN
-# ==========================================
-
-def main():
-    if not TELEGRAM_TOKEN or TELEGRAM_TOKEN == "PUT_YOUR_NEW_TELEGRAM_BOT_TOKEN_HERE":
-        raise ValueError("Telegram Bot Token ထည့်ပေးပါ။")
-
-    if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "PUT_YOUR_NEW_OPENROUTER_API_KEY_HERE":
-        raise ValueError("OpenRouter API Key ထည့်ပေးပါ။")
-
+# Telegram Bot ကို Background Thread ကနေ Run ဖို့ (Render Web Service အတွက်)
+def run_telegram_bot():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("role", set_role))
     application.add_handler(CommandHandler("reset", reset))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_chat_and_forward))
 
-    print("================================")
-    print("AI Companion Bot is running...")
-    print("Role switching: Enabled (Femdom/Slave)")
-    print("Conversation Memory: Enabled")
-    print("Admin notifications: Enabled")
-    print("================================")
-
+    print("Telegram Bot is running via polling...")
     application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import threading
+    # Bot ကို background မှာ အလုပ်လုပ်ခိုင်းပြီး Flask ကို Main Port မှာ ဖွင့်ပါ
+    bot_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+    bot_thread.start()
+    
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
